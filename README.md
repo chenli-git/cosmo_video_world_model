@@ -5,9 +5,13 @@ A lightweight implementation inspired by Cosmos that learns to predict future vi
 ## 🎯 Project Overview
 
 This project implements a video world model that:
-- Learns physics dynamics from synthetic videos (bouncing balls, pendulums, falling objects, projectiles)
-- Predicts 30 future frames given 30 input frames
-- Uses CNN encoder → latent dynamics (GRU/Transformer) → decoder architecture
+- **Learns physics dynamics** from synthetic videos (bouncing balls, pendulums, falling objects, projectiles)
+- **Predicts future frames** autoregressively (30+ frames) given context frames
+- **Supports pretrained encoders** (ResNet, DINOv2) for better feature extraction
+- **Complete training pipeline** with loss functions, checkpointing, and TensorBoard logging
+- **Visual demos** for autoregressive rollout with side-by-side comparisons
+
+**Perfect for:** Learning about world models, physics prediction, video generation, or building a portfolio project!
 
 ## 🏗️ Architecture
 
@@ -66,10 +70,17 @@ Predicted Future Frames
 
 ## 🚀 Quick Start
 
-### 1. Install Dependencies
+### 1. Clone and Setup
 
 ```bash
+git clone https://github.com/chenli-git/cosmo_video_world_model.git
+cd cosmo_video_world_model
+
+# Create conda environment
+conda create -n cosmos-lite python=3.10
 conda activate cosmos-lite
+
+# Install dependencies
 pip install -r requirements.txt
 ```
 
@@ -100,24 +111,85 @@ This splits the 512 videos into:
 
 ### 4. Train the Model
 
-#### Basic Usage (Custom Encoder)
+#### Option A: Quick Start (Custom Encoder, CPU-friendly)
+```bash
+python tools/train_model.py \
+  --train-dir data/split/train \
+  --val-dir data/split/val \
+  --batch-size 4 \
+  --epochs 100 \
+  --world-model gru \
+  --device cpu \
+  --no-perceptual
+```
+
+#### Option B: Best Quality (Pretrained Encoder, GPU recommended)
+```bash
+python tools/train_model.py \
+  --train-dir data/split/train \
+  --val-dir data/split/val \
+  --batch-size 8 \
+  --epochs 100 \
+  --world-model transformer \
+  --use-pretrained \
+  --pretrained-model dinov2_vits14 \
+  --device cuda
+```
+
+**Monitor training:**
+```bash
+tensorboard --logdir runs
+```
+Open http://localhost:6006 in your browser.
+
+### 5. Run Autoregressive Demo
+
+Visualize predictions with side-by-side comparison:
+
+```bash
+python tools/rollout_demo.py \
+  --checkpoint checkpoints/best_model.pt \
+  --video-dir data/split/test \
+  --T-in 30 \
+  --num-predict 30 \
+  --video-idx 0
+```
+
+Outputs:
+- `outputs/demos/rollout_video_0.mp4` - Side-by-side comparison video
+- `outputs/demos/rollout_grid_0.png` - Frame grid with MSE metrics
+
+### 6. Programmatic Usage
+
+#### Load Dataset
+```python
+from src.data import create_data_loader
+
+# Create data loader
+train_loader = create_data_loader(
+    video_dir='data/split/train',
+    T_in=30,
+    T_out=30,
+    batch_size=4,
+    shuffle=True,
+    augment=True
+)
+```
+
+#### Create Model
 ```python
 from src.models import VideoWorldModel
 
-# Create model with custom encoder
+# Basic: Custom encoder
 model = VideoWorldModel(
     input_channels=3,
     latent_dim=256,
     hidden_dim=512,
     frame_size=64,
-    world_model_type='gru',  # or 'lstm', 'transformer'
-    use_pretrained_encoder=False
+    world_model_type='gru'
 )
-```
 
-#### Advanced Usage (Pretrained Encoder)
-```python
-# Use DINOv2 for better quality
+# Advanced: Pretrained encoder + enhanced decoder
 model = VideoWorldModel(
     input_channels=3,
     latent_dim=256,
@@ -125,62 +197,90 @@ model = VideoWorldModel(
     frame_size=64,
     world_model_type='transformer',
     use_pretrained_encoder=True,
-    pretrained_model_name='dinov2_vits14',  # or 'resnet50', 'resnet101', 'dinov2_vitb14'
-    freeze_encoder=False  # Set True to freeze pretrained weights
+    pretrained_model_name='dinov2_vits14',
+    freeze_encoder=False
 )
-# Enhanced decoder automatically activated!
 ```
 
-### 5. Load and Use the Dataset
+#### Train with Custom Loop
 
 ```python
-from src.data import create_data_loader
+from src.training import Trainer
 
-# Create train loader
-train_loader = create_data_loader(
-    video_dir='data/split/train',
-    T_in=30,        # 30 input frames
-    T_out=30,       # Predict 30 future frames
-    batch_size=4,
-    stride=5,
-    resize=(64, 64),
-    shuffle=True,
-    augment=True    # Data augmentation for training
+trainer = Trainer(
+    model=model,
+    train_loader=train_loader,
+    val_loader=val_loader,
+    device='cuda'
 )
 
-# Create val loader
-val_loader = create_data_loader(
-    video_dir='data/split/val',
-    T_in=30,
-    T_out=30,
-    batch_size=4,
-    shuffle=False,
-    augment=False
-)
-
-# Iterate through batches
-for context, target in train_loader:
-    # context: (B, T_in, C, H, W) - input frames
-    # target: (B, T_out, C, H, W) - frames to predict
-    pass
+trainer.train(num_epochs=100)
 ```
 
-### 5. Run Inference
+#### Inference
+```python
+import torch
 
+model.eval()
+with torch.no_grad():
+    # Predict future frames
+    pred_frames, pred_latents, context_latents = model(
+        context_frames,  # (B, T_in, C, H, W)
+        num_predictions=30
+    )
+    # pred_frames: (B, 30, C, H, W)
+```
+
+## 🛠️ Command-Line Tools
+
+### Generate Dataset
 ```bash
-python tools/inference.py \
-    --checkpoint checkpoints/best_model.pt \
-    --input path/to/video.mp4 \
-    --output outputs/prediction.mp4
+# Generate synthetic physics videos
+python tools/generate_sample_videos.py --output data/raw --num-videos 128
+
+# Split into train/val/test
+python tools/split_dataset.py --input data/raw --output data/split
 ```
 
-## 🎮 Interactive Demo
+### Train Model
+```bash
+# Basic training
+python tools/train_model.py --train-dir data/split/train --val-dir data/split/val
 
-Check out `notebooks/demo.ipynb` for an interactive demonstration of:
-- Loading and visualizing training data
-- Training a small model
-- Generating predictions
-- Comparing predictions with ground truth
+# Advanced options
+python tools/train_model.py \
+  --train-dir data/split/train \
+  --val-dir data/split/val \
+  --batch-size 8 \
+  --epochs 200 \
+  --world-model transformer \
+  --use-pretrained \
+  --pretrained-model dinov2_vitb14 \
+  --freeze-encoder \
+  --lr 1e-4 \
+  --recon-type l1 \
+  --device cuda
+
+# Resume training
+python tools/train_model.py --resume checkpoints/checkpoint_epoch_50.pt
+```
+
+### Run Demos
+```bash
+# Autoregressive rollout demo
+python tools/rollout_demo.py \
+  --checkpoint checkpoints/best_model.pt \
+  --video-dir data/split/test \
+  --T-in 30 \
+  --num-predict 60 \
+  --video-idx 5
+```
+
+### Monitor Training
+```bash
+# View training curves and metrics
+tensorboard --logdir runs
+```
 
 ## 📊 Model Details
 
@@ -247,13 +347,30 @@ This project captures the essence of Cosmos:
   - Bouncing balls: 256×256 
   - Other types: 64×64
 
-## 📈 Training Tips
+## 💡 Training Tips
 
-- Start with simple scenarios (single bouncing ball)
-- Input frames (T_in): 30, Output frames (T_out): 30
-- Learning rate: 1e-4 with cosine annealing
-- Batch size: 4-8 depending on GPU memory
-- Use data augmentation (horizontal flip, brightness) for training
+### For Best Results:
+1. **Start simple**: Train on custom CNN first, then try pretrained encoders
+2. **Batch size**: 4-8 (depending on GPU memory)
+3. **Learning rate**: 1e-4 with cosine annealing scheduler
+4. **Gradient clipping**: 1.0 prevents exploding gradients
+5. **Data augmentation**: Enabled by default for training set
+6. **Validation**: Monitor every epoch, save best model automatically
+
+### Model Selection:
+- **GRU**: Fastest, ~17M params, good for quick experiments
+- **Transformer**: Better long-term predictions, ~22M params
+- **Pretrained encoder**: Best quality, requires GPU for perceptual loss
+
+### GPU vs CPU:
+- **CPU**: Use `--no-perceptual` flag, smaller batch size (2-4)
+- **GPU**: Enable perceptual loss for better visual quality
+- **MPS (Mac M1/M2)**: Use `--device mps`, similar to CPU settings
+
+### Expected Training Time:
+- **100 epochs on CPU**: ~8-12 hours (GRU model)
+- **100 epochs on GPU**: ~2-4 hours (with perceptual loss)
+- **Convergence**: Loss stabilizes around epoch 50-80
 
 ## 🔧 Customization
 
@@ -284,13 +401,47 @@ Edit files in `src/models/` to experiment with:
 - Diffusion-based prediction
 - Multi-scale processing
 
-## 📝 Example Results
+## 📊 Expected Results
 
-After training, you should see:
-- Accurate short-term predictions (1-10 frames)
-- Reasonable physics (objects don't teleport)
-- Smooth motion trajectories
-- Gradual quality degradation for long-term predictions
+### After 100 Epochs:
+- **Short-term (1-10 frames)**: High accuracy, MSE < 100
+- **Medium-term (10-20 frames)**: Good physics, slight blurring
+- **Long-term (20-30+ frames)**: Reasonable trajectories, visible degradation
+
+### What Good Predictions Look Like:
+✅ **Physics consistency**: Balls bounce realistically, no teleporting
+✅ **Smooth motion**: No sudden jumps between frames
+✅ **Temporal coherence**: Low temporal consistency loss
+✅ **Visual quality**: Clear shapes, minimal blurring (with pretrained encoder)
+
+### Common Issues:
+❌ **Blurry predictions**: Increase perceptual loss weight or use pretrained encoder
+❌ **Mode collapse**: Predictions converge to mean frame - reduce learning rate
+❌ **Physics violations**: Increase training epochs or use transformer model
+❌ **Exploding gradients**: Enable gradient clipping (default: 1.0)
+
+## ❓ FAQ
+
+**Q: Can I use my own videos?**
+A: Yes! Place `.mp4` files in `data/raw/` and run `split_dataset.py`. The model works best with physics-based or predictable motion.
+
+**Q: How much GPU memory do I need?**
+A: Minimum 4GB for batch_size=4. Recommended 8GB+ for batch_size=8 with pretrained encoders.
+
+**Q: Why are my predictions blurry?**
+A: Try: (1) Use pretrained encoder like DINOv2, (2) Enable perceptual loss, (3) Increase training epochs.
+
+**Q: Which world model should I use?**
+A: Start with GRU (fast), upgrade to Transformer for better long-term predictions.
+
+**Q: Can I train on CPU?**
+A: Yes, but slower. Use `--device cpu --no-perceptual --batch-size 2` for faster training.
+
+**Q: How do I resume training?**
+A: Use `--resume checkpoints/checkpoint_epoch_N.pt`
+
+**Q: Where are the outputs saved?**
+A: Checkpoints in `checkpoints/`, logs in `runs/`, demos in `outputs/demos/`
 
 ## 🙏 Acknowledgments
 
